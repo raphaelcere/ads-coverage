@@ -491,10 +491,15 @@ def visible_runs(visible, d, step, min_len=2):
 
 
 # ----------------------------------------------------------------------------- KML
-def _polygon(ring, tessellate=False):
-    """KML polygon clamped to the ground; ring is a list of (lon, lat) and is closed automatically."""
-    coords = " ".join(f"{x:.6f},{y:.6f},0" for x, y in list(ring) + [ring[0]])
-    return (f"<Polygon>{'<tessellate>1</tessellate>' if tessellate else ''}<altitudeMode>clampToGround</altitudeMode>"
+def _polygon(ring, tessellate=False, height_m=None):
+    """KML polygon; ring is a list of (lon, lat) and is closed automatically.
+
+    Clamped to the ground, or, with height_m, drawn that many metres above the ground (relativeToGround), which
+    keeps it visible above the 3D buildings of Google Earth.
+    """
+    coords = " ".join(f"{x:.6f},{y:.6f},{0 if height_m is None else height_m:.1f}" for x, y in list(ring) + [ring[0]])
+    mode = "clampToGround" if height_m is None else "relativeToGround"
+    return (f"<Polygon>{'<tessellate>1</tessellate>' if tessellate else ''}<altitudeMode>{mode}</altitudeMode>"
             f"<outerBoundaryIs><LinearRing><coordinates>{coords}</coordinates></LinearRing></outerBoundaryIs></Polygon>")
 
 
@@ -506,14 +511,15 @@ def _level_colours(n):
 
 
 def write_kml(path, lat, lon, ground_m, ant_h, az, d, visible, levels_ft, k, agl=False, az_step=1.0, step=250.0,
-              quantity="visible", note=""):
+              quantity="visible", note="", clamp=False):
     """Write one KML layer per level; return (continuous range, farthest range), each [level, azimuth] in m.
 
     `visible` is the boolean mask [level, azimuth, distance] to draw; `quantity` names it in the labels
     ("visible", or "received" when it comes from a reception probability) and `note` is added to the description.
 
     AMSL levels are drawn as the outline of the continuous coverage; AGL levels as the visible sectors,
-    which may be fragmented in mountainous terrain.
+    which may be fragmented in mountainous terrain. AGL sectors are drawn at their real height above the ground
+    (the aircraft height), unless `clamp` is True, which drapes them on the ground.
     """
     reference = "AGL" if agl else "AMSL"
     continuous = np.stack([continuous_range(v, d) for v in visible])
@@ -544,7 +550,8 @@ def write_kml(path, lat, lon, ground_m, ant_h, az, d, visible, levels_ft, k, agl
             for row, r0, r1 in zip(rows, starts, ends):
                 a0, a1 = az[row] - half, az[row] + half
                 corners = [destination(lat, lon, a, r) for a, r in ((a0, r0), (a1, r0), (a1, r1), (a0, r1))]
-                sectors.append(_polygon([(float(c[1]), float(c[0])) for c in corners]))
+                sectors.append(_polygon([(float(c[1]), float(c[0])) for c in corners],
+                                        height_m=None if clamp else levels_ft[i] * FT))
             geometry = f"<MultiGeometry>{''.join(sectors)}</MultiGeometry>"
             description = f"<description>{visible[i].mean():.1%} of sampled points {quantity}</description>"
         else:
@@ -585,6 +592,8 @@ def build_parser():
     ap.add_argument("--proxy", default=None, help="HTTP(S) proxy, e.g. http://host:8080")
     ap.add_argument("--ca-bundle", default=None, help="CA certificate(s) in PEM format (proxy with SSL inspection)")
     ap.add_argument("--timeout", type=float, default=30.0, help="connection timeout (s)")
+    ap.add_argument("--clamp-to-ground", action="store_true",
+                    help="KML: with --agl, drape the zones on the ground instead of drawing them at their real height")
     ap.add_argument("--flat", action="store_true", help="flat terrain at 0 m (theoretical radio horizon, for testing)")
 
     fading = ap.add_argument_group("fading and link budget (Clarke 1968)",
@@ -670,7 +679,7 @@ def main(argv=None):
         print(f"Warning: {terrain.unknown:.0%} of the points have no terrain data (treated as 0 m).", file=sys.stderr)
 
     continuous, farthest = write_kml(a.output, a.lat, a.lon, ground_m, a.ant_h, az, d, visible, levels_ft, a.k,
-                                     a.agl, a.az_step, step, quantity, note)
+                                     a.agl, a.az_step, step, quantity, note, a.clamp_to_ground)
     reference = "AGL" if a.agl else "AMSL"
     print(f"Receiver ground: {ground_m:.0f} m; antenna: {ground_m + a.ant_h:.0f} m AMSL; k = {a.k:.4f}; levels in {reference}")
     if note:

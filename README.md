@@ -39,7 +39,8 @@ adsb-coverage 46.9480 7.4474 --agl --alt-ft 30,100,300,1000 --near-res-m 10 -o l
 ```
 
 A summary of the ranges is printed on the console, and the KML has one layer per level (with `--agl`, the visible
-sectors are drawn one by one). `adsb-coverage --help` lists all the options.
+sectors are drawn one by one). With `--agl`, each layer is drawn at its real height above the ground, so that it stays visible above the 3D
+buildings of Google Earth; `--clamp-to-ground` drapes it on the ground instead. `adsb-coverage --help` lists all the options.
 
 With `--fading`, the drawn zone is where a message is received with at least a given probability (see
 [Reception probability](#reception-probability-optional---fading)). All the link budget values must then be given:

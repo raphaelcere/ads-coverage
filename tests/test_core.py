@@ -223,3 +223,16 @@ def test_cli_fading_writes_a_kml_of_the_received_zone(tmp_path, capsys, fading):
     assert "received max" in text and "Reception probability at least 90%" in text
     assert len(ET.fromstring(text.encode()).findall(f".//{KML}Polygon")) > 0
     assert "max received" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("clamp", [False, True])
+def test_agl_kml_is_drawn_at_the_real_height_unless_clamped(tmp_path, capsys, clamp):
+    out = tmp_path / "agl.kml"
+    ac.main([str(LAT), str(LON), "--flat", "--agl", "--alt-ft", "100", "--az-step", "10", "-o", str(out),
+             *(["--clamp-to-ground"] if clamp else [])])
+    text = out.read_text(encoding="utf-8")
+    if clamp:
+        assert "<altitudeMode>clampToGround</altitudeMode>" in text and "relativeToGround" not in text
+    else:
+        assert "<altitudeMode>relativeToGround</altitudeMode>" in text and "clampToGround" not in text
+        assert f",{100 * FT:.1f} " in text  # 30.5 m: the altitude of the vertices
