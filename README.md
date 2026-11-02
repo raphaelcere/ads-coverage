@@ -62,7 +62,9 @@ The repository contains a workflow that computes a coverage without installing a
 3. Optional, to test the reception probability (fading): choose a **preset** (`adsb1090-example` or
    `adsl-m-example`). It fills the empty link budget fields with the example values of the table in the
    [Model](#model) section and turns fading on as `rice` if it was `none`. A value typed in a field always wins
-   over the preset. The presets are examples for testing, not validated defaults.
+   over the preset. A preset also proposes an antenna height of 10 m and, in `agl` mode, the levels
+   100, 300, 1000 and 3000 ft; both can be changed in the `ant_h` and `alt_ft` inputs. The presets are examples for
+   testing, not validated defaults.
 4. When the run has finished, download the KML from the **Artifacts** section (kept for 30 days); the table of
    ranges appears in the run summary.
 
@@ -90,7 +92,7 @@ behind a ridge (at low altitude an aircraft can reappear above a distant, higher
 
 **Opening it in Google Earth**
 
-1. **Google Earth Pro** (desktop): [download the file](https://github.com/raphaelcere/clarke-model-generator/raw/main/examples/bern-agl-low-altitudes.kml)
+1. **Google Earth Pro** (desktop): [download the file](https://github.com/raphaelcere/ads-coverage/raw/main/examples/bern-agl-low-altitudes.kml)
    (right-click, "Save link as..."), then double-click the `.kml`, or *File, Open*.
 2. **Google Earth web** ([earth.google.com/web](https://earth.google.com/web/)): *Projects*, *Open*, *Import KML file from computer*,
    then pick the downloaded file. The file is large (about 1 MB), so the import can take a few seconds.

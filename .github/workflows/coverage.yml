@@ -18,12 +18,12 @@ on:
         default: agl
         options: [agl, amsl]
       ant_h:
-        description: "Antenna height above ground (m)"
-        required: true
+        description: "Antenna height above ground (m); empty = 10 m (a value typed here always wins over the preset)"
+        required: false
         type: string
-        default: "10"
+        default: ""
       alt_ft:
-        description: "Levels in ft, comma-separated (empty = mode default)"
+        description: "Levels in ft, comma-separated (empty = preset example in agl mode, else mode default)"
         required: false
         type: string
         default: ""
@@ -128,6 +128,9 @@ jobs:
         env:
           PRESET: ${{ inputs.preset }}
           IN_FADING: ${{ inputs.fading }}
+          IN_MODE: ${{ inputs.mode }}
+          IN_ANT_H: ${{ inputs.ant_h }}
+          IN_ALT_FT: ${{ inputs.alt_ft }}
           IN_FREQ_MHZ: ${{ inputs.freq_mhz }}
           IN_EIRP_DBM: ${{ inputs.eirp_dbm }}
           IN_RX_GAIN_DBI: ${{ inputs.rx_gain_dbi }}
@@ -144,10 +147,18 @@ jobs:
             adsl-m-example) P_FREQ=868.2; P_EIRP=16.15; P_GAIN=0; P_SENS=-100; P_K=10 ;;
             *) echo "Unknown preset: $PRESET"; exit 1 ;;
           esac
+          # Example geometry of the presets (agl mode only for the levels); anything typed in the inputs wins
+          P_ANT=""; P_ALT=""
+          if [ "$PRESET" != "none" ]; then
+            P_ANT=10
+            if [ "$IN_MODE" = "agl" ]; then P_ALT="100,300,1000,3000"; fi
+          fi
           FADING="$IN_FADING"
           if [ "$PRESET" != "none" ] && [ "$FADING" = "none" ]; then FADING=rice; fi
           {
             echo "FADING=$FADING"
+            echo "ANT_H=${IN_ANT_H:-${P_ANT:-10}}"
+            echo "ALT_FT=${IN_ALT_FT:-$P_ALT}"
             echo "FREQ_MHZ=${IN_FREQ_MHZ:-$P_FREQ}"
             echo "EIRP_DBM=${IN_EIRP_DBM:-$P_EIRP}"
             echo "RX_GAIN_DBI=${IN_RX_GAIN_DBI:-$P_GAIN}"
@@ -161,8 +172,6 @@ jobs:
         env:
           LAT: ${{ inputs.lat }}
           LON: ${{ inputs.lon }}
-          ANT_H: ${{ inputs.ant_h }}
-          ALT_FT: ${{ inputs.alt_ft }}
           NEAR_KM: ${{ inputs.near_km }}
           NEAR_RES_M: ${{ inputs.near_res_m }}
           RMAX_KM: ${{ inputs.rmax_km }}
@@ -195,8 +204,6 @@ jobs:
           LAT: ${{ inputs.lat }}
           LON: ${{ inputs.lon }}
           MODE: ${{ inputs.mode }}
-          ANT_H: ${{ inputs.ant_h }}
-          ALT_FT: ${{ inputs.alt_ft }}
           NEAR_KM: ${{ inputs.near_km }}
           NEAR_RES_M: ${{ inputs.near_res_m }}
           RMAX_KM: ${{ inputs.rmax_km }}
