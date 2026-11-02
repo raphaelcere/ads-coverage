@@ -236,3 +236,87 @@ def test_agl_kml_is_drawn_at_the_real_height_unless_clamped(tmp_path, capsys, cl
     else:
         assert "<altitudeMode>relativeToGround</altitudeMode>" in text and "clampToGround" not in text
         assert f",{100 * FT:.1f} " in text  # 30.5 m: the altitude of the vertices
+
+
+class Building:
+    """Surface source: a 30 m building 60 to 120 m east of the receiver, NaN (unknown) elsewhere."""
+
+    def sample(self, lat, lon):
+        dx = (lon - LON) * 111320 * math.cos(math.radians(LAT))
+        return np.where((dx > 60) & (dx < 120) & (np.abs(lat - LAT) < 0.05), 30.0, np.nan)
+
+
+def east_visibility(surface, agl, heights_ft):
+    az, d, visible, _ = ac.compute_coverage(ac.Terrain([Flat()]), LAT, LON, 10.0, [h * FT for h in heights_ft],
+                                            1000, 20, 90, 4 / 3, agl=agl, surface=surface)
+    return d, visible[:, 1, :]  # azimuth 90 degrees
+
+
+@pytest.mark.parametrize("agl", [False, True])
+def test_a_building_hides_low_aircraft_behind_it_but_not_high_ones(agl):
+    d, with_building = east_visibility(Building(), agl, [100, 3000])
+    _, without = east_visibility(None, agl, [100, 3000])
+    behind = d > 300
+    assert without.all()
+    assert not with_building[0][behind].any()  # 100 ft is below the line over the roof
+    assert with_building[1][behind].all()  # 3000 ft clears it
+    assert not with_building[0][(d > 60) & (d < 120)].any()  # an aircraft inside the building is not visible
+
+
+def test_surface_does_not_change_the_receiver_ground_or_the_ground_levels():
+    az, d, v1, g1 = ac.compute_coverage(ac.Terrain([Flat()]), LAT, LON, 10.0, [30.0], 1000, 20, 90, 4 / 3, agl=True)
+    az, d, v2, g2 = ac.compute_coverage(ac.Terrain([Flat()]), LAT, LON, 10.0, [30.0], 1000, 20, 90, 4 / 3, agl=True,
+                                        surface=Building())
+    assert g1 == g2 == 0.0
+    assert (v1[:, [0, 2, 3], :] == v2[:, [0, 2, 3], :]).all()  # azimuths without a building
+
+
+def test_block_max_keeps_the_highest_cell_and_ignores_nan():
+    grid = np.array([[1, 2, np.nan, np.nan], [3, 9, np.nan, np.nan], [0, 0, 5, np.nan], [0, 0, np.nan, 4]], float)
+    out = ac.core.block_max(grid, 2)
+    assert out.shape == (2, 2)
+    assert out[0, 0] == 9 and np.isnan(out[0, 1]) and out[1, 0] == 0 and out[1, 1] == 5
+
+
+def test_surface_asset_choice():
+    pick = ac.SwissSurface3D._pick_asset
+    assert pick({"a_2_2056.tif": {"href": "u2"}, "a_0.5_2056_5728.tif": {"href": "u05"}}) == "u05"
+    assert pick({"only.tif": {"href": "u"}, "x.xyz.zip": {"href": "z"}}) == "u"
+    assert pick({"x.xyz.zip": {"href": "z"}}) is None
+
+
+def test_surface_tiles_from_a_folder_are_reduced_with_the_maximum_and_cached(tmp_path):
+    rasterio = pytest.importorskip("rasterio")
+    from rasterio.transform import from_origin
+
+    e0, n0 = ac.wgs84_to_lv95(LAT, LON)
+    tx, ty = int(e0 // 1000), int(n0 // 1000)
+    grid = np.full((2000, 2000), 500.0, dtype="float32")
+    grid[400:440, 1000:1040] = 530.0  # a 20 m x 20 m building, aligned on the 20 m blocks
+    tiles = tmp_path / "tiles"
+    tiles.mkdir()
+    with rasterio.open(tiles / f"swisssurface3d-raster_2019_{tx}-{ty}_0.5_2056_5728.tif", "w", driver="GTiff", height=2000,
+                       width=2000, count=1, dtype="float32", transform=from_origin(tx * 1000, ty * 1000 + 1000, 0.5, 0.5)) as ds:
+        ds.write(grid, 1)
+    surface = ac.SwissSurface3D(LAT, LON, 100, res_m=20, cache_dir=tmp_path / "cache", tile_dir=tiles)
+    assert surface.res == 20 and surface.n == 50
+    tile = surface.tiles[tx * 100000 + ty]
+    assert tile.shape == (50, 50) and tile.max() == 530.0 and np.median(tile) == 500.0
+    again = ac.SwissSurface3D(LAT, LON, 100, res_m=20, cache_dir=tmp_path / "cache")  # from the cache, no tile_dir
+    assert again.tiles[tx * 100000 + ty].max() == 530.0
+
+
+def test_cli_surface_option_adds_the_obstacles_and_a_note(tmp_path, capsys, monkeypatch):
+    class FakeSurface(Building):
+        res = 20.0
+
+        def __init__(self, lat, lon, radius_m, res_m, cache_dir, tile_dir=None):
+            self.radius_m = radius_m
+
+    monkeypatch.setattr(ac.core, "SwissSurface3D", FakeSurface)
+    out = tmp_path / "s.kml"
+    ac.main([str(LAT), str(LON), "--near-km", "0", "--far", "none", "--agl", "--alt-ft", "100", "--rmax-km", "1",
+             "--step-m", "20", "--az-step", "90", "--surface", "--surface-km", "2", "-o", str(out)])
+    text = capsys.readouterr().out
+    assert "swissSURFACE3D" in text and "within 2 km" in text
+    assert "swissSURFACE3D" in out.read_text(encoding="utf-8")

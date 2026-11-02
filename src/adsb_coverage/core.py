@@ -70,6 +70,8 @@ R_EARTH = 6371008.8  # mean Earth radius (m)
 FT = 0.3048  # metres per foot
 C_LIGHT = 299_792_458.0  # speed of light (m/s)
 STAC_ITEMS = "https://data.geo.admin.ch/api/stac/v0.9/collections/ch.swisstopo.swissalti3d/items"
+STAC_SURFACE = ("https://data.geo.admin.ch/api/stac/v0.9/collections/ch.swisstopo.swisssurface3d-raster/items",
+                "https://data.geo.admin.ch/api/stac/v0.9/collections/ch.swisstopo.swisssurface3d/items")
 COP_URL = "https://copernicus-dem-30m.s3.amazonaws.com/{n}/{n}.tif"
 
 
@@ -148,11 +150,16 @@ class SwissAlti3D:
     .xyz.zip files downloaded by hand (offline mode, nothing is downloaded).
     """
 
+    CELLS, CELL_M, FACTORS = _CELLS, _CELL_M, _FACTORS  # cells per tile side, cell size (m), exact decimation factors
+    ITEMS = (STAC_ITEMS,)  # STAC item endpoints to try, in order
+    CACHE = "swissalti3d"
+    LOCAL = "*{tx}-{ty}_2_2056*.xyz.zip"  # file names looked up in tile_dir
+
     def __init__(self, lat, lon, radius_m, res_m=50, cache_dir=None, workers=8, tile_dir=None):
-        self.factor = min(_FACTORS, key=lambda f: abs(f * _CELL_M - res_m))
-        self.res = self.factor * _CELL_M
-        self.n = _CELLS // self.factor
-        self.cache = Path(cache_dir or Path.home() / ".cache" / "adsb_coverage" / "swissalti3d")
+        self.factor = min(self.FACTORS, key=lambda f: abs(f * self.CELL_M - res_m))
+        self.res = self.factor * self.CELL_M
+        self.n = self.CELLS // self.factor
+        self.cache = Path(cache_dir or Path.home() / ".cache" / "adsb_coverage" / self.CACHE)
         self.cache.mkdir(parents=True, exist_ok=True)
         self.workers = workers
         self.tile_dir = Path(tile_dir) if tile_dir else None
@@ -197,11 +204,11 @@ class SwissAlti3D:
         """Read tiles from tile_dir; return those that were not found."""
         not_found = []
         for tx, ty in missing:
-            path = next(iter(sorted(self.tile_dir.glob(f"*{tx}-{ty}_2_2056*.xyz.zip"))), None)
+            path = next(iter(sorted(self.tile_dir.glob(self.LOCAL.format(tx=tx, ty=ty)))), None)
             if path is None:
                 not_found.append((tx, ty))
             else:
-                self._store(tx, ty, decimate_xyz_zip(path.read_bytes(), self.factor))
+                self._store(tx, ty, self._decode(path.read_bytes()))
         return not_found
 
     def _download(self, lat, lon, radius_m, missing):
@@ -219,22 +226,42 @@ class SwissAlti3D:
                     self._store(tx, ty, array)
 
     @staticmethod
-    def _list_items(bbox):
-        """Most recent 2 m tile of each id in the bounding box: {"2485-1109": (year, url)}."""
-        url, params, tiles = STAC_ITEMS, {"bbox": ",".join(f"{v:.6f}" for v in bbox), "limit": 100}, {}
-        while url:
-            response = http_get(url, params=params, timeout=60)
-            response.raise_for_status()
-            page = response.json()
-            for item in page.get("features", []):
-                _, year, tile_id = item["id"].split("_")
-                href = next((a["href"] for name, a in item["assets"].items()
-                             if "_2_2056" in name and name.endswith(".xyz.zip")), None)
-                if href and (tile_id not in tiles or year > tiles[tile_id][0]):
-                    tiles[tile_id] = (year, href)
-            url = next((link["href"] for link in page.get("links", []) if link.get("rel") == "next"), None)
-            params = None  # the "next" link already carries the query
-        return tiles
+    def _pick_asset(assets):
+        """href of the 2 m XYZ asset of an item, or None."""
+        return next((a["href"] for name, a in assets.items() if "_2_2056" in name and name.endswith(".xyz.zip")), None)
+
+    def _list_items(self, bbox):
+        """Most recent tile of each id in the bounding box: {"2485-1109": (year, url)}.
+
+        The endpoints of ITEMS are tried in order; the first one that yields tiles wins.
+        """
+        error = None
+        for endpoint in self.ITEMS:
+            url, params, tiles = endpoint, {"bbox": ",".join(f"{v:.6f}" for v in bbox), "limit": 100}, {}
+            try:
+                while url:
+                    response = http_get(url, params=params, timeout=60)
+                    response.raise_for_status()
+                    page = response.json()
+                    for item in page.get("features", []):
+                        *_, year, tile_id = item["id"].split("_")
+                        href = self._pick_asset(item["assets"])
+                        if href and (tile_id not in tiles or year > tiles[tile_id][0]):
+                            tiles[tile_id] = (year, href)
+                    url = next((link["href"] for link in page.get("links", []) if link.get("rel") == "next"), None)
+                    params = None  # the "next" link already carries the query
+            except Exception as exc:  # noqa: BLE001
+                error = exc
+                continue
+            if tiles:
+                return tiles
+        if error:
+            raise error
+        return {}
+
+    def _decode(self, data):
+        """Tile content (bytes) -> array [row, col] decimated to self.n x self.n cells, north at row 0."""
+        return decimate_xyz_zip(data, self.factor)
 
     def _fetch(self, tile):
         (tx, ty), (year, href) = tile
@@ -242,7 +269,7 @@ class SwissAlti3D:
             try:
                 response = http_get(href, timeout=120)
                 response.raise_for_status()
-                return (tx, ty), decimate_xyz_zip(response.content, self.factor)
+                return (tx, ty), self._decode(response.content)
             except Exception as exc:  # noqa: BLE001
                 error = exc
         print(f"  ! tile {tx}-{ty} ({year}) failed: {error}", file=sys.stderr)
@@ -263,6 +290,47 @@ class SwissAlti3D:
             row = np.clip(((ty * 1000 + 1000 - n[m]) / self.res).astype(int), 0, self.n - 1)
             out[m] = tile[row, col]
         return out
+
+
+def block_max(grid, factor):
+    """Maximum over factor x factor blocks of a square grid (NaN ignored; all-NaN blocks stay NaN)."""
+    n = grid.shape[0] // factor
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)  # all-NaN blocks
+        return np.nanmax(grid[:n * factor, :n * factor].reshape(n, factor, n, factor), axis=(1, 3)).astype(np.float32)
+
+
+class SwissSurface3D(SwissAlti3D):
+    """swissSURFACE3D Raster 1 km tiles (0.5 m): surface model with buildings, vegetation and bridges.
+
+    Used as a source of obstacles, not of ground: `sample` returns the surface elevation, NaN where no tile is
+    loaded. Tiles are reduced with the maximum over blocks of cells (conservative for obstruction) and cached like
+    the swissALTI3D ones. Same download, cache and offline (`tile_dir`, GeoTIFF files) mechanism. Requires rasterio.
+    """
+
+    CELLS, CELL_M = 2000, 0.5
+    FACTORS = (1, 2, 4, 5, 8, 10, 16, 20, 25, 40, 50, 80, 100)
+    ITEMS = STAC_SURFACE
+    CACHE = "swisssurface3d"
+    LOCAL = "*{tx}-{ty}*.tif"
+
+    @staticmethod
+    def _pick_asset(assets):
+        """href of the 0.5 m GeoTIFF asset of an item, or None."""
+        tifs = [(name, a["href"]) for name, a in assets.items() if name.lower().endswith((".tif", ".tiff"))]
+        return next((href for name, href in tifs if "_0.5_" in name), tifs[0][1] if tifs else None)
+
+    def _decode(self, data):
+        try:
+            from rasterio.io import MemoryFile
+        except ImportError:
+            raise SystemExit("rasterio is required for swissSURFACE3D: pip install rasterio") from None
+        with MemoryFile(data) as memory, memory.open() as ds:
+            grid = ds.read(1).astype(np.float32)
+            if ds.nodata is not None:
+                grid[grid == ds.nodata] = np.nan
+        grid[grid < -500] = np.nan  # no-data
+        return block_max(grid, self.factor)
 
 
 # ----------------------------------------------------------------------------- terrain: GeoTIFF (WGS84)
@@ -355,8 +423,12 @@ class Terrain:
 
 
 # ----------------------------------------------------------------------------- propagation model
-def _terrain_profiles(terrain, lat, lon, ant_h, rmax, step, az_step, k, ground):
-    """Terrain along radial profiles and the steepest slope to it, seen from the antenna."""
+def _terrain_profiles(terrain, lat, lon, ant_h, rmax, step, az_step, k, ground, surface=None):
+    """Ground along radial profiles and the steepest slope to the obstacles, seen from the antenna.
+
+    The obstacles are the ground, or, with `surface` (a source returning NaN where unknown), the higher of the
+    ground and the surface (buildings, vegetation). Aircraft heights above ground (AGL) stay relative to the ground.
+    """
     az = np.arange(0, 360, az_step, dtype=float)
     d = np.arange(step, rmax + step, step, dtype=float)
     points_lat, points_lon = destination(lat, lon, az[:, None], d[None, :])
@@ -364,7 +436,8 @@ def _terrain_profiles(terrain, lat, lon, ant_h, rmax, step, az_step, k, ground):
     z = terrain.sample(points_lat, points_lon)
     antenna = ground_m + ant_h
     bulge = d**2 / (2 * k * R_EARTH)
-    steepest_terrain = np.maximum.accumulate((z - bulge - antenna) / d, axis=1)
+    obstacle = z if surface is None else np.fmax(z, surface.sample(points_lat, points_lon))
+    steepest_terrain = np.maximum.accumulate((obstacle - bulge - antenna) / d, axis=1)
     return az, d, z, ground_m, antenna, bulge, steepest_terrain
 
 
@@ -374,7 +447,8 @@ def _level_visibility(z, height, agl, antenna, bulge, d, steepest_terrain):
     return aircraft, (aircraft - bulge - antenna) / d >= steepest_terrain
 
 
-def compute_coverage(terrain, lat, lon, ant_h, heights_m, rmax, step, az_step, k, ground=None, agl=False):
+def compute_coverage(terrain, lat, lon, ant_h, heights_m, rmax, step, az_step, k, ground=None, agl=False,
+                     surface=None):
     """
     Visibility of aircraft along radial profiles around the antenna.
 
@@ -388,9 +462,11 @@ def compute_coverage(terrain, lat, lon, ant_h, heights_m, rmax, step, az_step, k
     - AMSL levels (agl=False): constant altitudes. Visibility ends at the first obstruction.
     - AGL levels (agl=True): heights above the local ground, the aircraft follows the relief. Visibility is
       no longer monotonic with distance: an aircraft can reappear beyond a ridge, over a higher valley.
+    - surface: optional source of surface elevations (swissSURFACE3D); buildings and vegetation then obstruct too,
+      and an aircraft below the surface (inside a building) is not visible.
     """
     az, d, z, ground_m, antenna, bulge, steepest = _terrain_profiles(terrain, lat, lon, ant_h, rmax, step,
-                                                                     az_step, k, ground)
+                                                                     az_step, k, ground, surface)
     visible = np.stack([_level_visibility(z, h, agl, antenna, bulge, d, steepest)[1] for h in heights_m])
     return az, d, visible, ground_m
 
@@ -446,7 +522,8 @@ def slant_range(antenna, aircraft, d):
     return np.sqrt((r2 - r1) ** 2 + 4 * r1 * r2 * np.sin(d / (2 * R_EARTH)) ** 2)
 
 
-def compute_reception(terrain, lat, lon, ant_h, heights_m, rmax, step, az_step, k, link, ground=None, agl=False):
+def compute_reception(terrain, lat, lon, ant_h, heights_m, rmax, step, az_step, k, link, ground=None, agl=False,
+                      surface=None):
     """
     Probability of receiving a message, along the same profiles as compute_coverage.
 
@@ -454,7 +531,7 @@ def compute_reception(terrain, lat, lon, ant_h, heights_m, rmax, step, az_step, 
     aircraft is not in line of sight, otherwise the reception probability given by the link budget `link`.
     """
     az, d, z, ground_m, antenna, bulge, steepest = _terrain_profiles(terrain, lat, lon, ant_h, rmax, step,
-                                                                     az_step, k, ground)
+                                                                     az_step, k, ground, surface)
     levels = []
     for h in heights_m:
         aircraft, visible = _level_visibility(z, h, agl, antenna, bulge, d, steepest)
@@ -584,6 +661,10 @@ def build_parser():
     ap.add_argument("--az-step", type=float, default=1.0, help="azimuth step (degrees)")
     ap.add_argument("--near-km", type=float, default=10.0, help="radius of the swissALTI3D zone (0 = disabled)")
     ap.add_argument("--near-res-m", type=float, default=50.0, help="swissALTI3D resolution after decimation (m); 20 = finer")
+    ap.add_argument("--surface", action="store_true",
+                    help="add buildings and vegetation (swissSURFACE3D, 0.5 m) as obstacles near the receiver; needs rasterio")
+    ap.add_argument("--surface-km", type=float, default=3.0, help="radius of the swissSURFACE3D zone (default 3; heavy download)")
+    ap.add_argument("--surface-res-m", type=float, default=20.0, help="swissSURFACE3D resolution after reduction (m, maximum of each block)")
     ap.add_argument("--far", choices=["copernicus", "none"], default="copernicus", help="terrain beyond the near zone")
     ap.add_argument("--far-res-m", type=float, default=300.0, help="resolution of the far terrain (m)")
     ap.add_argument("--dem", nargs="*", default=None, help="local EPSG:4326 GeoTIFF(s), used instead of Copernicus")
@@ -661,11 +742,17 @@ def main(argv=None):
                 raise SystemExit("rasterio is required for the far terrain: pip install rasterio "
                                  "(or use --far none to rely on swissALTI3D only).") from None
     terrain = Terrain(sources)
+    surface, surface_note = None, ""
+    if a.surface and not a.flat:
+        surface = SwissSurface3D(a.lat, a.lon, a.surface_km * 1000, a.surface_res_m, a.cache_dir and Path(a.cache_dir) / "surface",
+                                 tile_dir=a.tile_dir)
+        surface_note = (f"Obstacles: buildings and vegetation (swissSURFACE3D, {surface.res:g} m, maximum of each block) "
+                        f"within {a.surface_km:g} km.")
 
     heights_m = [f * FT for f in levels_ft]
     if link:
         az, d, probability, ground_m = compute_reception(terrain, a.lat, a.lon, a.ant_h, heights_m, rmax, step,
-                                                         a.az_step, a.k, link, a.ground_m, a.agl)
+                                                         a.az_step, a.k, link, a.ground_m, a.agl, surface)
         visible = probability >= a.prob
         quantity = "received"
         statistic = f"Rice K={link.k_db:g} dB" if link.k_db is not None else "Rayleigh"
@@ -673,8 +760,9 @@ def main(argv=None):
                 f"receiver gain {link.rx_gain_dbi:g} dBi, losses {link.losses_db:g} dB, sensitivity {link.sensitivity_dbm:g} dBm).")
     else:
         az, d, visible, ground_m = compute_coverage(terrain, a.lat, a.lon, a.ant_h, heights_m, rmax, step, a.az_step,
-                                                    a.k, a.ground_m, a.agl)
+                                                    a.k, a.ground_m, a.agl, surface)
         quantity, note = "visible", ""
+    note = " ".join(x for x in (note, surface_note) if x)
     if terrain.unknown > 0.02 and not a.flat:
         print(f"Warning: {terrain.unknown:.0%} of the points have no terrain data (treated as 0 m).", file=sys.stderr)
 

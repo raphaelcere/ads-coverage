@@ -52,6 +52,13 @@ adsb-coverage 46.9480 7.4474 --agl --fading rice --k-db KDB --prob 0.9 \
 
 `--fading rayleigh` needs no `--k-db`. The same options exist in the online workflow below.
 
+By default only the ground is modelled (bare-earth terrain). With `--surface`, buildings and vegetation from
+swissSURFACE3D are added as obstacles around the receiver (see [Buildings and vegetation](#buildings-and-vegetation-optional---surface)):
+
+```
+adsb-coverage 46.9480 7.4474 --agl --ant-h 30 --alt-ft 100,300,1000 --surface --surface-km 3 -o city.kml
+```
+
 ## Online calculation (GitHub Actions)
 
 The repository contains a workflow that computes a coverage without installing anything, from GitHub's servers
@@ -66,7 +73,9 @@ The repository contains a workflow that computes a coverage without installing a
    over the preset. A preset also proposes an antenna height of 10 m and, in `agl` mode, the levels
    100, 300, 1000 and 3000 ft; both can be changed in the `ant_h` and `alt_ft` inputs. The presets are examples for
    testing, not validated defaults.
-4. When the run has finished, download the KML from the **Artifacts** section (kept for 30 days); the table of
+4. Optional: set `surface_km` (for example 3) to add buildings and vegetation as obstacles (swissSURFACE3D). The
+   default 0 disables it, because the download is heavy.
+5. When the run has finished, download the KML from the **Artifacts** section (kept for 30 days); the table of
    ranges appears in the run summary.
 
 The inputs are validated (numbers only, bounded ranges) before anything is computed. Write access to the
@@ -122,6 +131,11 @@ classDiagram
         -_fetch(tile)
         +sample(lat, lon)
     }
+    class SwissSurface3D {
+        +res : float
+        +tiles : dict
+        +sample(lat, lon)
+    }
     class GeoTiffMosaic {
         +chunks : list
         +sample(lat, lon)
@@ -159,6 +173,8 @@ classDiagram
         +destination(lat, lon, az, dist)
     }
     TerrainSource <|.. SwissAlti3D
+    TerrainSource <|.. SwissSurface3D
+    SwissAlti3D <|-- SwissSurface3D
     TerrainSource <|.. GeoTiffMosaic
     TerrainSource <|.. Terrain
     Terrain o-- "1..*" TerrainSource : tries in order
@@ -166,6 +182,8 @@ classDiagram
     CLI --> Propagation : calls
     CLI --> KmlWriter : calls
     CLI --> LinkBudget : builds with --fading
+    CLI --> SwissSurface3D : builds with --surface
+    Propagation ..> SwissSurface3D : obstacles (optional)
     Propagation ..> LinkBudget : uses
     Propagation --> Terrain : samples the terrain
     Propagation ..> Geodesy
@@ -208,6 +226,23 @@ standard atmosphere value [2] (Recommendation ITU-R P.834, Annex 1, section 2: R
 and k = 4/3 as the standard value). In the "flat Earth" frame, the usual parabolic approximation of the Earth bulge,
 a point at distance d and height h has the apparent height h - d<sup>2</sup>/(2 k R). An aircraft is visible if the slope
 from the antenna to the aircraft is at least the steepest slope to any terrain met so far.
+
+### Buildings and vegetation (optional, `--surface`)
+
+swissALTI3D is a bare-earth model: buildings and trees do not exist in it. With `--surface`, the
+[swissSURFACE3D Raster](https://www.swisstopo.admin.ch/en/geodata/height/surface3d-raster.html) surface model (0.5 m,
+ground, vegetation, buildings, bridges; high-voltage lines and pylons are excluded) is used as an additional source of
+**obstacles** within `--surface-km` (default 3 km) of the receiver:
+
+- The line of sight is blocked by the higher of the ground and the surface; beyond that radius only the ground is used.
+- Heights above ground (`--agl`) and the receiver ground stay relative to the **ground** (swissALTI3D), not to the roofs.
+  The antenna height `--ant-h` is therefore the height above the ground: for an antenna on a 20 m building, give
+  at least 20 m plus the mast.
+- An aircraft below the surface (inside a building or a tree) is not visible, so building footprints stay empty for
+  the lowest levels and fill in above the roofs.
+- Each tile is reduced to `--surface-res-m` (default 20 m) with the **maximum** of its 0.5 m cells, which is
+  conservative: a narrow building or tree blocks the whole 20 m cell.
+- Needs `rasterio`. Each 1 km tile is a large download, so the zone is kept small.
 
 ### Reception probability (optional, `--fading`)
 
@@ -278,6 +313,7 @@ adsb-coverage 46.9480 7.4474 --agl --fading rice --k-db 10 --prob 0.9 \
 |---|---|---|
 | [swissALTI3D](https://www.swisstopo.admin.ch/en/height-model-swissalti3d) (swisstopo, 2 m) | near zone (`--near-km`, default 10 km) | downloaded automatically through the STAC API (v0.9), cached in `~/.cache/adsb_coverage`, decimated to `--near-res-m` (default 50 m). Bare ground. |
 | [Copernicus GLO-30](https://registry.opendata.aws/copernicus-dem/) (30 m) | rest of the domain | low-resolution read (`--far-res-m`, default 300 m), requires `rasterio` |
+| [swissSURFACE3D Raster](https://www.swisstopo.admin.ch/en/geodata/height/surface3d-raster.html) (swisstopo, 0.5 m) | optional obstacles (`--surface`, `--surface-km`, default 3 km) | surface including buildings and vegetation; downloaded through the STAC API, reduced to `--surface-res-m` (maximum of each block) and cached in `~/.cache/adsb_coverage/swisssurface3d`; requires `rasterio`. Offline: GeoTIFF tiles in `--tile-dir`. |
 | Local EPSG:4326 GeoTIFF | `--dem file.tif` | |
 
 Corporate network: `--proxy http://host:port`, `--ca-bundle ca.pem`, or offline mode with `--tile-dir`
@@ -290,7 +326,9 @@ Corporate network: `--proxy http://host:port`, `--ca-bundle ca.pem`, or offline 
 - Migration of the STAC API from v0.9 (deprecated, active at least until the end of 2026) to v1.
 - `--alt-m` option, automatic detection of the system proxy.
 - Comparison with the range observed in real logs (per azimuth), calibration of k.
-- Man-made obstacles (swissSURFACE3D), Fresnel zone, ground reflection (two-ray), antenna patterns.
+- The swissSURFACE3D download is not validated in the field yet: the STAC collection and asset names are inferred from
+  the documentation (the continuous integration only tests synthetic tiles). Outside Switzerland there is no surface model.
+- Fresnel zone, ground reflection (two-ray), antenna patterns.
 - Confirmed link budget values: the workflow presets and the table above are examples, not validated defaults.
 
 ## References
