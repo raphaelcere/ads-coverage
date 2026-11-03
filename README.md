@@ -221,6 +221,8 @@ sequenceDiagram
 
 ### Line of sight
 
+![Line of sight over a curved Earth and terrain: an aircraft is visible if it lies above the steepest slope to the terrain](docs/line-of-sight.svg)
+
 For each azimuth, the terrain is sampled along a profile. The effective Earth radius is k R with k = 4/3, the
 standard atmosphere value [2] (Recommendation ITU-R P.834, Annex 1, section 2: R<sub>e</sub> = k a, equation (3) for k,
 and k = 4/3 as the standard value). In the "flat Earth" frame, the usual parabolic approximation of the Earth bulge,
@@ -228,6 +230,8 @@ a point at distance d and height h has the apparent height h - d<sup>2</sup>/(2 
 from the antenna to the aircraft is at least the steepest slope to any terrain met so far.
 
 ### Buildings and vegetation (optional, `--surface`)
+
+![Buildings and trees from swissSURFACE3D block the line of sight above the bare ground of swissALTI3D](docs/surface-model.svg)
 
 swissALTI3D is a bare-earth model: buildings and trees do not exist in it. With `--surface`, the
 [swissSURFACE3D Raster](https://www.swisstopo.admin.ch/en/geodata/height/surface3d-raster.html) surface model (0.5 m,
@@ -245,6 +249,8 @@ ground, vegetation, buildings, bridges; high-voltage lines and pylons are exclud
 - Needs `rasterio`. Each 1 km tile is a large download, so the zone is kept small.
 
 ### Reception probability (optional, `--fading`)
+
+![Probability of reception against distance for Rayleigh and Rice fading, with the 90 % contour](docs/reception-probability.svg)
 
 On top of the geometry, the tool can estimate the probability that a message is received.
 

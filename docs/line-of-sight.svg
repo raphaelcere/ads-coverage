@@ -1,0 +1,61 @@
+<svg xmlns="http://www.w3.org/2000/svg" lang="en" viewBox="0 0 900 420" width="900" height="420" font-family="Helvetica, Arial, sans-serif">
+  <title>Line of sight over a curved Earth and terrain: an aircraft is visible if it lies above the steepest line to the terrain</title>
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#cfe6fb"/><stop offset="1" stop-color="#f4f9ff"/>
+    </linearGradient>
+    <g id="plane">
+      <path d="M-16,0 L12,-3 L18,0 L12,3 Z" fill="#37474f"/>
+      <path d="M-2,0 L-10,-13 L-5,-13 L6,0 L-5,13 L-10,13 Z" fill="#37474f"/>
+      <path d="M-14,0 L-18,-6 L-15,-6 L-10,0 L-15,6 L-18,6 Z" fill="#37474f"/>
+    </g>
+    <marker id="arr" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 Z" fill="#37474f"/>
+    </marker>
+  </defs>
+  <rect width="900" height="420" fill="url(#sky)"/>
+  <text x="450" y="26" text-anchor="middle" font-size="19" font-weight="bold" fill="#1b2a38">Line of sight over a curved Earth and terrain</text>
+
+  <!-- shadow below the limiting line of sight, behind the ridge -->
+  <polygon points="430,262 820,240 820,430 520,354" fill="#e53935" fill-opacity="0.14"/>
+
+  <!-- ground: the Earth curves away (effective radius k R) -->
+  <path d="M0,300 L80,300 Q490,300 900,488 L900,420 L0,420 Z" fill="#7a8a5b"/>
+  <path d="M0,300 L80,300 Q490,300 900,488" fill="none" stroke="#4b5a36" stroke-width="2"/>
+  <!-- ridge -->
+  <polygon points="350,320 430,262 520,354" fill="#8d7b68" stroke="#5d4f40" stroke-width="2"/>
+  <text x="440" y="316" text-anchor="middle" font-size="13" font-weight="bold" fill="#fff">Ridge</text>
+
+  <!-- flat-Earth reference and curvature drop -->
+  <line x1="80" y1="300" x2="820" y2="300" stroke="#455a64" stroke-width="1.2" stroke-dasharray="2 5"/>
+  <line x1="820" y1="302" x2="820" y2="419" stroke="#37474f" stroke-width="1.6" marker-start="url(#arr)" marker-end="url(#arr)"/>
+  <text x="810" y="372" text-anchor="end" font-size="13" fill="#1b2a38">Earth bulge</text>
+  <text x="810" y="390" text-anchor="end" font-size="13" font-style="italic" fill="#1b2a38">d² / (2 k R)</text>
+
+  <!-- antenna -->
+  <line x1="80" y1="300" x2="80" y2="282" stroke="#263238" stroke-width="4"/>
+  <circle cx="80" cy="280" r="5" fill="#d32f2f"/>
+  <text x="80" y="332" text-anchor="middle" font-size="14" font-weight="bold" fill="#1b2a38">Receiver</text>
+
+  <!-- limiting line of sight: steepest slope to the terrain met so far -->
+  <line x1="80" y1="282" x2="820" y2="240" stroke="#e53935" stroke-width="1.5" stroke-dasharray="3 5"/>
+  <text x="640" y="232" text-anchor="middle" font-size="12" fill="#b71c1c">steepest slope to the terrain</text>
+
+  <!-- visible aircraft -->
+  <line x1="80" y1="282" x2="230" y2="250" stroke="#2e7d32" stroke-width="3"/>
+  <use href="#plane" x="230" y="250"/>
+  <line x1="80" y1="282" x2="700" y2="190" stroke="#2e7d32" stroke-width="3"/>
+  <use href="#plane" x="700" y="190"/>
+  <text x="700" y="164" text-anchor="middle" font-size="13" font-weight="bold" fill="#1b5e20">above the line: visible</text>
+  <!-- hidden aircraft -->
+  <use href="#plane" x="620" y="300"/>
+  <text x="620" y="326" text-anchor="middle" font-size="13" font-weight="bold" fill="#b71c1c">below the line: hidden</text>
+  <text x="620" y="342" text-anchor="middle" font-size="12" fill="#b71c1c">(no reception)</text>
+
+  <!-- rule box -->
+  <rect x="24" y="48" width="372" height="86" rx="8" fill="#fff" fill-opacity="0.85" stroke="#90a4ae"/>
+  <text x="38" y="70" font-size="13.5" font-weight="bold" fill="#1b2a38">For each azimuth, along the profile</text>
+  <text x="38" y="92" font-size="13" fill="#33414d">apparent height = h − d² / (2 k R),  k = 4/3</text>
+  <text x="38" y="112" font-size="13" fill="#33414d">visible if its slope from the antenna is at least</text>
+  <text x="38" y="128" font-size="13" fill="#33414d">the steepest slope to any terrain met before it</text>
+</svg>
