@@ -553,6 +553,15 @@ def max_visible_range(visible, d):
     return np.where(visible.any(axis=-1), d[last], 0.0)
 
 
+def area_share(visible, d):
+    """Share of the area of the disc of radius max(d) that is visible (array [azimuth, distance]).
+
+    A sample at distance d stands for an annular sector whose area grows like d, so it is weighted by d; the
+    plain mean of the mask counts every distance equally and is dominated by the far field.
+    """
+    return float((visible * d).sum() / (visible.shape[0] * d.sum()))
+
+
 def visible_runs(visible, d, step, min_len=2):
     """Contiguous visible stretches for one level (array [azimuth, distance]).
 
@@ -630,7 +639,8 @@ def write_kml(path, lat, lon, ground_m, ant_h, az, d, visible, levels_ft, k, agl
                 sectors.append(_polygon([(float(c[1]), float(c[0])) for c in corners],
                                         height_m=None if clamp else levels_ft[i] * FT))
             geometry = f"<MultiGeometry>{''.join(sectors)}</MultiGeometry>"
-            description = f"<description>{visible[i].mean():.1%} of sampled points {quantity}</description>"
+            description = (f"<description>{visible[i].mean():.1%} of sampled points {quantity}; "
+                           f"{area_share(visible[i], d):.1%} of the area within {d[-1] / 1000:g} km {quantity}</description>")
         else:
             reach = continuous[i]
             plat, plon = destination(lat, lon, az, reach)
@@ -772,10 +782,10 @@ def main(argv=None):
     print(f"Receiver ground: {ground_m:.0f} m; antenna: {ground_m + a.ant_h:.0f} m AMSL; k = {a.k:.4f}; levels in {reference}")
     if note:
         print(note)
-    print(f"{'Level':>9} | continuous range (km): {'min':>5} {'mean':>5} {'max':>5} | {'max ' + quantity:>12} | {quantity:>8}")
+    print(f"{'Level':>9} | continuous range (km): {'min':>5} {'mean':>5} {'max':>5} | {'max ' + quantity:>12} | {quantity:>8} | {'area':>6}")
     for ft, cont, far, vis in zip(levels_ft, continuous, farthest, visible):
         print(f"{ft:>6g} ft | {'':>22} {cont.min() / 1000:5.1f} {cont.mean() / 1000:5.1f} {cont.max() / 1000:5.1f} | "
-              f"{far.max() / 1000:9.1f} km | {vis.mean():8.1%}")
+              f"{far.max() / 1000:9.1f} km | {vis.mean():8.1%} | {area_share(vis, d):6.1%}")
     print(f"KML: {a.output}")
 
 

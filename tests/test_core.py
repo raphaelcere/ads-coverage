@@ -320,3 +320,21 @@ def test_cli_surface_option_adds_the_obstacles_and_a_note(tmp_path, capsys, monk
     text = capsys.readouterr().out
     assert "swissSURFACE3D" in text and "within 2 km" in text
     assert "swissSURFACE3D" in out.read_text(encoding="utf-8")
+
+
+def test_area_share_weights_distances_by_the_area_they_stand_for():
+    d = np.arange(1.0, 101.0)
+    visible = np.zeros((4, 100), bool)
+    visible[:, :50] = True  # visible within half the radius
+    assert visible.mean() == 0.5
+    assert ac.core.area_share(visible, d) == pytest.approx(1275 / 5050)  # about a quarter of the disc
+    assert ac.core.area_share(np.ones((4, 100), bool), d) == pytest.approx(1.0)
+
+
+def test_agl_kml_description_gives_the_point_and_area_shares(tmp_path, capsys):
+    out = tmp_path / "a.kml"
+    ac.main([str(LAT), str(LON), "--flat", "--agl", "--alt-ft", "100", "--rmax-km", "50", "--az-step", "10",
+             "-o", str(out)])
+    assert "of sampled points visible; " in out.read_text(encoding="utf-8")
+    assert "of the area within 50 km visible" in out.read_text(encoding="utf-8")
+    assert "area" in capsys.readouterr().out
